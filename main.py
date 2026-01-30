@@ -56,12 +56,12 @@ class ToolTip:
 class OracleApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("🏛️ THE ORACLE: Swing Trading System")
+        self.title("🏛️ THE ORACLE: Plan de Trading Automatizado")
         self.geometry("1750x900")
 
         self.is_running = False
-        self.market_condition = "NEUTRAL" # BULLISH, BEARISH, NEUTRAL
-        self.market_score = 0 # -10 a +10
+        self.market_condition = "NEUTRAL"
+        self.market_score = 0
         self.tickers = []
         self.load_data()
 
@@ -69,48 +69,45 @@ class OracleApp(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # === PANEL DE MANDO (Izquierda) ===
+        # === PANEL IZQUIERDO ===
         self.left_frame = ctk.CTkFrame(self, width=280, corner_radius=0)
         self.left_frame.grid(row=0, column=0, sticky="nsew")
         
-        ctk.CTkLabel(self.left_frame, text="🏛️ ORACLE OS", font=ctk.CTkFont(size=22, weight="bold")).pack(pady=(30, 10))
-        ctk.CTkLabel(self.left_frame, text="By Warren 'Gemini' Buffett", text_color="gray").pack(pady=(0, 20))
-
+        ctk.CTkLabel(self.left_frame, text="🏛️ ORACLE TRADER", font=ctk.CTkFont(size=22, weight="bold")).pack(pady=(30, 10))
+        
         # Input
         input_box = ctk.CTkFrame(self.left_frame, fg_color="transparent")
         input_box.pack(pady=10, padx=20, fill="x")
-        self.entry_ticker = ctk.CTkEntry(input_box, placeholder_text="Añadir (ej: TSLA)")
+        self.entry_ticker = ctk.CTkEntry(input_box, placeholder_text="Añadir (ej: NVDA)")
         self.entry_ticker.pack(side="left", fill="x", expand=True, padx=(0,5))
         ctk.CTkButton(input_box, text="+", width=30, command=self.add_manual_ticker).pack(side="right")
 
-        # Lista
         self.lbl_count = ctk.CTkLabel(self.left_frame, text=f"Cartera: {len(self.tickers)} activos", font=ctk.CTkFont(weight="bold"))
         self.lbl_count.pack(pady=5, padx=20, anchor="w")
         
         self.scroll_tickers = ctk.CTkScrollableFrame(self.left_frame)
         self.scroll_tickers.pack(fill="both", expand=True, padx=20, pady=10)
 
-        # Botón Maestro
-        self.btn_analyze = ctk.CTkButton(self.left_frame, text="🔍 ANÁLISIS DIARIO", height=60, 
-                                         font=ctk.CTkFont(size=16, weight="bold"), 
+        self.btn_analyze = ctk.CTkButton(self.left_frame, text="🧠 GENERAR PLAN DE TRADING", height=60, 
+                                         font=ctk.CTkFont(size=15, weight="bold"), 
                                          fg_color="#1a1a1a", border_width=2, border_color="#00ffea",
                                          hover_color="#333",
                                          command=self.manual_scan)
         self.btn_analyze.pack(padx=20, pady=30, fill="x")
 
-        # === PANEL DE DATOS (Derecha) ===
+        # === PANEL DERECHO ===
         self.right_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.right_frame.grid(row=0, column=1, sticky="nsew")
 
-        # HEADER: ESTADO DEL MERCADO (EL OJO DE SAURON)
-        self.market_frame = ctk.CTkFrame(self.right_frame, fg_color="#111", height=80, corner_radius=10)
+        # Header Mercado
+        self.market_frame = ctk.CTkFrame(self.right_frame, fg_color="#111", height=70, corner_radius=10)
         self.market_frame.pack(fill="x", padx=20, pady=10)
         
-        self.lbl_market_status = ctk.CTkLabel(self.market_frame, text="ESPERANDO ANÁLISIS DE MERCADO (SPY & VIX)...", 
+        self.lbl_market_status = ctk.CTkLabel(self.market_frame, text="SISTEMA EN ESPERA...", 
                                               font=ctk.CTkFont(size=18, weight="bold"), text_color="gray")
         self.lbl_market_status.place(relx=0.5, rely=0.5, anchor="center")
 
-        # RESULTADOS
+        # Tabla Resultados
         self.results_area = ctk.CTkScrollableFrame(self.right_frame)
         self.results_area.pack(fill="both", expand=True, padx=20, pady=10)
 
@@ -162,19 +159,16 @@ class OracleApp(ctk.CTk):
             ctk.CTkLabel(row, text=t, width=60, anchor="w").pack(side="left")
             ctk.CTkButton(row, text="x", width=25, height=20, fg_color="#442222", hover_color="red", command=lambda x=t: self.remove_ticker(x)).pack(side="right")
 
-    # --- EL CEREBRO DE BUFFETT ---
+    # --- LÓGICA DE ANÁLISIS ---
     def manual_scan(self):
         if self.is_running: return
         if not self.tickers: return messagebox.showwarning("!", "Añade acciones.")
         self.is_running = True
-        self.btn_analyze.configure(state="disabled", text="⏳ CONSULTANDO AL FED...")
+        self.btn_analyze.configure(state="disabled", text="⏳ CALCULANDO NIVELES...")
         threading.Thread(target=self.run_full_analysis, daemon=True).start()
 
     def run_full_analysis(self):
-        # 1. ANALIZAR EL MERCADO GLOBAL (SPY + VIX)
         self.analyze_market_health()
-        
-        # 2. ANALIZAR ACCIONES INDIVIDUALES
         results = []
         for i, ticker in enumerate(self.tickers):
             self.btn_analyze.configure(text=f"⏳ Analizando {ticker} ({i+1}/{len(self.tickers)})...")
@@ -185,7 +179,6 @@ class OracleApp(ctk.CTk):
 
     def analyze_market_health(self):
         try:
-            # Descargamos SPY (S&P 500) y ^VIX (Volatilidad)
             spy = yf.Ticker("SPY").history(period="6mo")
             vix = yf.Ticker("^VIX").history(period="1mo")
             
@@ -195,119 +188,115 @@ class OracleApp(ctk.CTk):
             vix_now = vix['Close'].iloc[-1]
             
             score = 0
-            # Tendencia SPY
             if spy_price > spy_sma50: score += 5
             if spy_price > spy_sma200: score += 5
+            if vix_now < 20: score += 5
+            elif vix_now > 30: score -= 10
             
-            # Miedo (VIX)
-            if vix_now < 20: score += 5    # Mercado tranquilo
-            elif vix_now > 30: score -= 10 # Pánico extremo (No comprar)
-            
-            self.market_score = score # Max 15, Min -10
-            
+            self.market_score = score
             if score >= 10: 
-                self.market_condition = "BULLISH (ALCISTA)"
+                self.market_condition = "BULLISH (ALCISTA) 🟢"
                 self.market_color = "#00ff00"
             elif score >= 0:
-                self.market_condition = "NEUTRAL (PRECAUCIÓN)"
+                self.market_condition = "NEUTRAL (PRECAUCIÓN) 🟡"
                 self.market_color = "#ffff00"
             else:
-                self.market_condition = "BEARISH (PELIGRO - SOLO CASH)"
+                self.market_condition = "BEARISH (NO COMPRAR) 🔴"
                 self.market_color = "#ff0000"
-                
         except:
-            self.market_condition = "ERROR CONEXIÓN"
+            self.market_condition = "OFFLINE"
             self.market_color = "gray"
             self.market_score = 0
 
     def analyze_stock(self, ticker):
         try:
             t = yf.Ticker(ticker)
-            df = t.history(period="1y") # Un año para ver la media de 200
+            df = t.history(period="1y")
             if len(df) < 200: return None
             
             price = df['Close'].iloc[-1]
-            
-            # Medias Móviles
             sma50 = df['Close'].rolling(50).mean().iloc[-1]
             sma200 = df['Close'].rolling(200).mean().iloc[-1]
-            
-            # Indicadores
             rsi = ta.momentum.rsi(df['Close'], window=14).iloc[-1]
             atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14).iloc[-1]
             macd = ta.trend.MACD(df['Close'])
             macd_diff = macd.macd_diff().iloc[-1]
             
-            # Volumen
-            vol_today = df['Volume'].iloc[-1]
             vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
-            rvol = vol_today / vol_avg if vol_avg > 0 else 0
+            rvol = df['Volume'].iloc[-1] / vol_avg if vol_avg > 0 else 0
 
-            # --- LÓGICA DE SEÑAL MAESTRA ---
+            # --- SEÑAL (Igual que antes) ---
             signal_pct = 0
-            
-            # 1. Filtro "Golden Rule" (Tendencia de largo plazo)
             if price > sma200: signal_pct += 30
-            else: signal_pct -= 50 # Si está bajo la media de 200, Buffett no toca esto.
-            
-            # 2. Tendencia Medio Plazo
+            else: signal_pct -= 50
             if price > sma50: signal_pct += 20
-            
-            # 3. Momentum (MACD & RSI)
             if macd_diff > 0: signal_pct += 15
-            if rsi > 50 and rsi < 70: signal_pct += 10 # Zona sana
-            if rsi < 30: signal_pct += 25 # Rebote técnico (Dip)
-            if rsi > 75: signal_pct -= 40 # Sobrecompra
-            
-            # 4. Volumen (Confirmación)
-            if rvol > 1.5 and price > df['Open'].iloc[-1]: signal_pct += 10 # Volumen subiendo
-            
-            # 5. AJUSTE MACRO (EL FED)
-            # Si el mercado está mal, reducimos la señal de compra drásticamente
-            if self.market_score < 0: # Mercado Bajista
-                signal_pct -= 50 
-            elif self.market_score < 10: # Mercado Neutro
-                signal_pct -= 10
-
+            if rsi > 50 and rsi < 70: signal_pct += 10
+            if rsi < 30: signal_pct += 25
+            if rsi > 75: signal_pct -= 40
+            if self.market_score < 0: signal_pct -= 50 
             signal_pct = max(-100, min(100, int(signal_pct)))
 
-            # TEXTOS
-            if signal_pct >= 80: rec = "💎 COMPRA MAESTRA"
-            elif signal_pct >= 40: rec = "🟢 COMPRAR"
-            elif signal_pct <= -40: rec = "🔴 VENDER"
-            else: rec = "⚪ MANTENER / ESPERAR"
+            rec = "MANTENER"
+            rec_col = "white"
+            if signal_pct >= 80: 
+                rec = "💎 COMPRA"
+                rec_col = "#00ffea"
+            elif signal_pct >= 40: 
+                rec = "🟢 ACUMULAR"
+                rec_col = "#00ff00"
+            elif signal_pct <= -40: 
+                rec = "🔴 VENDER"
+                rec_col = "#ff0000"
 
-            rec_col = "#00ffea" if signal_pct >= 80 else ("#00ff00" if signal_pct >= 40 else ("#ff0000" if signal_pct <= -40 else "white"))
-
+            # --- CÁLCULO DEL PLAN DE TRADING ---
+            # Stop Loss = 2 x ATR (Volatilidad)
+            stop_dist = 2.0 * atr
+            stop_loss = price - stop_dist
+            
+            # Target = 3 x ATR (Ratio 1.5)
+            target_dist = 3.0 * atr
+            target = price + target_dist
+            
+            # Risk/Reward y Porcentajes
+            risk_pct = (stop_dist / price) * 100
+            reward_pct = (target_dist / price) * 100
+            
             return {
                 "Ticker": ticker, "Price": price, 
                 "Signal": signal_pct, "Rec": rec, "RecCol": rec_col,
-                "SMA200": sma200, "RVol": rvol, "RSI": rsi,
-                "Stop": price - (2*atr), "Target": price + (3*atr)
+                "Stop": stop_loss, "Target": target,
+                "Risk": risk_pct, "Reward": reward_pct
             }
         except: return None
 
     def render_results(self, results):
         self.is_running = False
-        self.btn_analyze.configure(state="normal", text="🔍 ANÁLISIS DIARIO")
-        
-        # Actualizar Header Mercado
-        self.lbl_market_status.configure(text=f"MERCADO: {self.market_condition} (Puntuación Fed: {self.market_score})", text_color=self.market_color)
+        self.btn_analyze.configure(state="normal", text="🧠 GENERAR PLAN DE TRADING")
+        self.lbl_market_status.configure(text=f"ESTADO MERCADO: {self.market_condition}", text_color=self.market_color)
 
         for w in self.results_area.winfo_children(): w.destroy()
         if not results: return
         results.sort(key=lambda x: x['Signal'], reverse=True)
 
-        # COLUMNAS
+        # --- CABECERAS DEL PLAN DE TRADING ---
+        # Ahora ponemos el FOCO en los PRECIOS
         cols = [
-            ("Ticker", 60), ("VEREDICTO BUFFETT", 150), ("Confianza", 70), 
-            ("Precio", 70), ("Tendencia (200d)", 100), ("RSI", 50), ("Stop Loss", 80)
+            ("Ticker", 60, "Activo"),
+            ("ASESOR", 120, "Recomendación"),
+            ("ENTRADA 🛒", 80, "Precio actual (Tu precio de compra si entras ahora)."),
+            ("STOP LOSS 🛑", 80, "Vende si baja aquí.\n(Calculado a 2x ATR para dar margen)."),
+            ("OBJETIVO 🎯", 80, "Vende si sube aquí.\n(Calculado para ganar 1.5 veces lo arriesgado)."),
+            ("Riesgo", 70, "% que pierdes si toca el Stop."),
+            ("Beneficio", 70, "% que ganas si toca el Objetivo.")
         ]
         
         h_frame = ctk.CTkFrame(self.results_area, fg_color="#333", height=40)
         h_frame.pack(fill="x", pady=(0,5))
-        for txt, w in cols:
-            ctk.CTkLabel(h_frame, text=txt, width=w, font=ctk.CTkFont(weight="bold")).pack(side="left", padx=5)
+        for txt, w, tip in cols:
+            lbl = ctk.CTkLabel(h_frame, text=txt, width=w, font=ctk.CTkFont(weight="bold"))
+            lbl.pack(side="left", padx=5)
+            ToolTip(lbl, tip)
 
         for res in results:
             bg = "#111"
@@ -317,20 +306,24 @@ class OracleApp(ctk.CTk):
             row.pack(fill="x", pady=2)
             
             self.mk_cell(row, res['Ticker'], 60, True)
-            ctk.CTkLabel(row, text=res['Rec'], width=150, text_color=res['RecCol'], font=ctk.CTkFont(weight="bold")).pack(side="left", padx=5)
-            self.mk_cell(row, f"{res['Signal']}%", 70, color=res['RecCol'])
-            self.mk_cell(row, f"${res['Price']:.2f}", 70)
             
-            trend = "ALCISTA" if res['Price'] > res['SMA200'] else "BAJISTA"
-            trend_col = "#00ff00" if trend == "ALCISTA" else "#ff5555"
-            self.mk_cell(row, trend, 100, color=trend_col)
+            # Asesor con % de confianza
+            ctk.CTkLabel(row, text=f"{res['Rec']} ({res['Signal']}%)", width=120, text_color=res['RecCol'], font=ctk.CTkFont(weight="bold")).pack(side="left", padx=5)
             
-            rsi_col = "white"
-            if res['RSI'] > 70: rsi_col = "#ff5555"
-            if res['RSI'] < 30: rsi_col = "#00ff00"
-            self.mk_cell(row, f"{int(res['RSI'])}", 50, color=rsi_col)
+            # 1. ENTRADA (Precio Actual)
+            self.mk_cell(row, f"${res['Price']:.2f}", 80, bold=True)
             
-            self.mk_cell(row, f"${res['Stop']:.2f}", 80, color="#ffaaaa")
+            # 2. STOP LOSS (Rojo Claro)
+            self.mk_cell(row, f"${res['Stop']:.2f}", 80, color="#ff7777")
+            
+            # 3. OBJETIVO (Verde Neon)
+            self.mk_cell(row, f"${res['Target']:.2f}", 80, color="#00ff00", bold=True)
+            
+            # 4. Riesgo %
+            self.mk_cell(row, f"-{res['Risk']:.1f}%", 70, color="#ffaaaa")
+            
+            # 5. Beneficio %
+            self.mk_cell(row, f"+{res['Reward']:.1f}%", 70, color="#ccffcc")
 
     def mk_cell(self, parent, text, w, bold=False, color="white"):
         f = ctk.CTkFont(weight="bold") if bold else ctk.CTkFont()
