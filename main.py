@@ -15,16 +15,28 @@ ctk.set_default_color_theme("dark-blue")
 JSON_FILE = "mis_acciones.json"
 EXCEL_FILE = "stocks.xlsx"
 
-# --- CLASE TOOLTIP (Para las descripciones al pasar el ratón) ---
+# --- CLASE TOOLTIP ---
 class ToolTip:
     def __init__(self, widget, text):
         self.widget = widget
         self.text = text
         self.tooltip_window = None
-        self.widget.bind("<Enter>", self.show_tooltip)
+        self.id = None
+        self.widget.bind("<Enter>", self.schedule_show)
         self.widget.bind("<Leave>", self.hide_tooltip)
+        self.widget.bind("<ButtonPress>", self.hide_tooltip)
+
+    def schedule_show(self, event=None):
+        self.unschedule()
+        self.id = self.widget.after(500, self.show_tooltip) 
+
+    def unschedule(self):
+        id = self.id
+        self.id = None
+        if id: self.widget.after_cancel(id)
 
     def show_tooltip(self, event=None):
+        if self.tooltip_window: return
         x, y, _, _ = self.widget.bbox("insert")
         x += self.widget.winfo_rootx() + 25
         y += self.widget.winfo_rooty() + 25
@@ -33,11 +45,12 @@ class ToolTip:
         self.tooltip_window.wm_overrideredirect(True)
         self.tooltip_window.wm_geometry(f"+{x}+{y}")
         
-        label = ctk.CTkLabel(self.tooltip_window, text=self.text, fg_color="#FFFFE0", text_color="#000", 
-                             corner_radius=5, padx=10, pady=5, font=("Arial", 11))
-        label.pack()
+        frame = ctk.CTkFrame(self.tooltip_window, fg_color="#FFFFE0", border_width=1, border_color="black")
+        frame.pack()
+        ctk.CTkLabel(frame, text=self.text, text_color="#000", padx=10, pady=5, font=("Arial", 11)).pack()
 
     def hide_tooltip(self, event=None):
+        self.unschedule()
         if self.tooltip_window:
             self.tooltip_window.destroy()
             self.tooltip_window = None
@@ -45,12 +58,14 @@ class ToolTip:
 class SniperApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("🦅 Sniper Swing Trader (Pro Edition)")
-        self.geometry("1650x850") 
+        self.title("🦅 Sniper Pro: The Advisor Edition")
+        self.geometry("1750x850") # Un poco más ancho para la nueva columna
 
         self.is_running = False
         self.auto_refresh_active = True 
-        self.tickers = self.load_data_source()
+        
+        self.tickers = []
+        self.load_data()
 
         # --- LAYOUT ---
         self.grid_columnconfigure(1, weight=1)
@@ -61,16 +76,17 @@ class SniperApp(ctk.CTk):
         self.left_frame.grid(row=0, column=0, sticky="nsew")
         self.left_frame.grid_rowconfigure(5, weight=1)
 
-        ctk.CTkLabel(self.left_frame, text="🦅 SWING COMMAND", font=ctk.CTkFont(size=20, weight="bold")).grid(row=0, column=0, padx=20, pady=(20, 10))
-        self.lbl_source = ctk.CTkLabel(self.left_frame, text="Fuente: ...", text_color="gray")
+        ctk.CTkLabel(self.left_frame, text="🦅 COMMAND CENTER", font=ctk.CTkFont(size=20, weight="bold")).grid(row=0, column=0, padx=20, pady=(20, 10))
+        self.lbl_source = ctk.CTkLabel(self.left_frame, text="Modo: Asesor Activo 🤖", text_color="#00ffea")
         self.lbl_source.grid(row=1, column=0, padx=20, pady=(0, 20))
 
-        # Input Manual
+        # Input
         self.input_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
         self.input_frame.grid(row=2, column=0, padx=20, pady=5, sticky="ew")
-        self.entry_ticker = ctk.CTkEntry(self.input_frame, placeholder_text="Ticker...")
+        self.entry_ticker = ctk.CTkEntry(self.input_frame, placeholder_text="Añadir: AAPL...")
         self.entry_ticker.pack(side="left", fill="x", expand=True, padx=(0,5))
-        ctk.CTkButton(self.input_frame, text="+", width=30, command=self.add_manual_ticker).pack(side="right")
+        self.btn_add = ctk.CTkButton(self.input_frame, text="+", width=30, command=self.add_manual_ticker)
+        self.btn_add.pack(side="right")
 
         self.switch_auto = ctk.CTkSwitch(self.left_frame, text="Auto-Refresh (30m)", command=self.toggle_auto_refresh)
         self.switch_auto.select()
@@ -82,7 +98,7 @@ class SniperApp(ctk.CTk):
         self.scroll_tickers = ctk.CTkScrollableFrame(self.left_frame)
         self.scroll_tickers.grid(row=5, column=0, padx=20, pady=5, sticky="nsew")
 
-        self.btn_analyze = ctk.CTkButton(self.left_frame, text="⚡ ESCANEAR MERCADO", height=50, 
+        self.btn_analyze = ctk.CTkButton(self.left_frame, text="⚡ CONSULTAR ASESOR", height=50, 
                                          font=ctk.CTkFont(size=16, weight="bold"), 
                                          fg_color="#006400", hover_color="#004d00",
                                          command=self.manual_scan)
@@ -94,7 +110,7 @@ class SniperApp(ctk.CTk):
 
         self.top_bar = ctk.CTkFrame(self.right_frame, fg_color="#222", height=50)
         self.top_bar.pack(fill="x")
-        self.lbl_status = ctk.CTkLabel(self.top_bar, text="Esperando órdenes...", font=ctk.CTkFont(size=14))
+        self.lbl_status = ctk.CTkLabel(self.top_bar, text="Esperando datos...", font=ctk.CTkFont(size=14))
         self.lbl_status.pack(side="left", padx=20, pady=10)
         self.lbl_last_update = ctk.CTkLabel(self.top_bar, text="", text_color="#aaaaaa")
         self.lbl_last_update.pack(side="right", padx=20)
@@ -103,45 +119,40 @@ class SniperApp(ctk.CTk):
         self.results_area.pack(fill="both", expand=True, padx=20, pady=20)
 
         self.refresh_ticker_list_ui()
-        self.update_source_label()
         self.start_auto_timer()
 
-    # --- GESTIÓN DE DATOS ---
-    def load_data_source(self):
+    # --- DATA ---
+    def load_data(self):
+        loaded_tickers = set()
         if os.path.exists(EXCEL_FILE):
             try:
                 df = pd.read_excel(EXCEL_FILE)
-                clean_list = [str(x).strip().upper() for x in df.iloc[:, 0].dropna().tolist() if str(x).strip()]
-                self.using_excel = True
-                return list(set(clean_list))
+                loaded_tickers.update([str(x).strip().upper() for x in df.iloc[:, 0].dropna().tolist() if str(x).strip()])
             except: pass
-        self.using_excel = False
         if os.path.exists(JSON_FILE):
-            with open(JSON_FILE, "r") as f: return json.load(f)
-        return []
-
-    def update_source_label(self):
-        if self.using_excel:
-            self.lbl_source.configure(text=f"📂 Excel: {EXCEL_FILE}", text_color="#4deeea")
-            self.entry_ticker.configure(state="disabled")
-        else:
-            self.lbl_source.configure(text="📝 Manual (JSON)", text_color="#ffb84d")
+            try:
+                with open(JSON_FILE, "r") as f: loaded_tickers.update(json.load(f))
+            except: pass
+        self.tickers = list(loaded_tickers)
 
     def save_json(self):
-        if not self.using_excel:
+        try:
             with open(JSON_FILE, "w") as f: json.dump(self.tickers, f)
+        except: pass
 
     def add_manual_ticker(self):
-        if self.using_excel: return
         txt = self.entry_ticker.get().upper().replace(',', ' ')
+        changed = False
         for n in [x.strip() for x in txt.split() if x.strip()]:
-            if n not in self.tickers: self.tickers.append(n)
-        self.save_json()
+            if n not in self.tickers:
+                self.tickers.append(n)
+                changed = True
+        if changed:
+            self.save_json()
+            self.refresh_ticker_list_ui()
         self.entry_ticker.delete(0, 'end')
-        self.refresh_ticker_list_ui()
 
     def remove_ticker(self, ticker):
-        if self.using_excel: return
         if ticker in self.tickers:
             self.tickers.remove(ticker)
             self.save_json()
@@ -154,8 +165,7 @@ class SniperApp(ctk.CTk):
             row = ctk.CTkFrame(self.scroll_tickers, fg_color="transparent")
             row.pack(fill="x", pady=1)
             ctk.CTkLabel(row, text=t, width=60, anchor="w").pack(side="left")
-            if not self.using_excel:
-                ctk.CTkButton(row, text="x", width=20, fg_color="transparent", text_color="red", command=lambda x=t: self.remove_ticker(x)).pack(side="right")
+            ctk.CTkButton(row, text="✕", width=25, height=20, fg_color="#442222", hover_color="#ff0000", command=lambda x=t: self.remove_ticker(x)).pack(side="right")
 
     def toggle_auto_refresh(self): self.auto_refresh_active = bool(self.switch_auto.get())
     def start_auto_timer(self):
@@ -165,13 +175,9 @@ class SniperApp(ctk.CTk):
     # --- ANÁLISIS ---
     def manual_scan(self):
         if self.is_running: return
-        if self.using_excel: 
-            self.tickers = self.load_data_source()
-            self.refresh_ticker_list_ui()
-        if not self.tickers: return messagebox.showwarning("!", "No hay acciones.")
-        
+        if not self.tickers: return messagebox.showwarning("!", "Añade acciones.")
         self.is_running = True
-        self.btn_analyze.configure(state="disabled", text="⏳ ESCANEANDO...", fg_color="#555")
+        self.btn_analyze.configure(state="disabled", text="⏳ PROCESANDO...", fg_color="#555")
         threading.Thread(target=self.run_analysis_thread, daemon=True).start()
 
     def run_analysis_thread(self):
@@ -185,96 +191,121 @@ class SniperApp(ctk.CTk):
     def analyze_stock(self, ticker):
         try:
             t = yf.Ticker(ticker)
-            # Pedimos 3 meses para tener margen de cálculo
-            df = t.history(period="3mo") 
-            if len(df) < 20: return None # Necesitamos mínimo 1 mes de trading
+            df = t.history(period="6mo") # Necesitamos un poco más de datos para MACD fiable
+            if len(df) < 50: return None
             
-            # Precios Clave
-            current_price = df['Close'].iloc[-1]
-            prev_close = df['Close'].iloc[-2]
-            close_5d = df['Close'].iloc[-6] if len(df) >= 6 else df['Close'].iloc[0]
-            close_15d = df['Close'].iloc[-16] if len(df) >= 16 else df['Close'].iloc[0]
+            info = t.info
+            price = df['Close'].iloc[-1]
+            prev = df['Close'].iloc[-2]
             
-            # Variaciones %
-            pct_today = ((current_price - prev_close) / prev_close) * 100
-            pct_5d = ((current_price - close_5d) / close_5d) * 100
-            pct_15d = ((current_price - close_15d) / close_15d) * 100
-            
-            # Indicadores
-            sma50 = df['Close'].rolling(50).mean().iloc[-1] if len(df) > 50 else current_price
-            atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14).iloc[-1]
+            # --- Indicadores Técnicos ---
+            sma50 = df['Close'].rolling(50).mean().iloc[-1]
             rsi = ta.momentum.rsi(df['Close'], window=14).iloc[-1]
+            atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14).iloc[-1]
+            
+            # MACD (Importante para la señal)
+            macd = ta.trend.MACD(df['Close'])
+            macd_diff = macd.macd_diff().iloc[-1] # Histograma
             
             # Volumen
             vol = df['Volume'].iloc[-1]
             avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
             rvol = vol / avg_vol if avg_vol > 0 else 0
 
-            # 52 Week High (Aprox con lo que tenemos o fast_info)
-            try: year_high = t.fast_info['year_high']
-            except: year_high = df['High'].max()
-            dist_high = ((year_high - current_price) / current_price) * 100
+            # --- CÁLCULO DEL SCORE (Calidad 0-100) ---
+            score = 0
+            float_shares = info.get('floatShares', 0)
+            if float_shares > 0 and float_shares < 20_000_000: score += 15
+            if rvol > 2: score += 20
+            if price > sma50: score += 15
+            score = max(0, min(100, int(score + 40))) # Base 40
 
-            # --- TARGETS SWING ---
-            stop_loss = current_price - (2 * atr)
-            target = current_price + (3 * atr) # Ratio 1.5
-            potential = ((target - current_price) / current_price) * 100
+            # --- CÁLCULO DEL ASESOR (Señal -100% a +100%) ---
+            signal = 0
+            
+            # 1. Tendencia (Peso: 40%)
+            if price > sma50: signal += 30
+            else: signal -= 30
+            
+            # 2. Momentum MACD (Peso: 20%)
+            if macd_diff > 0: signal += 20
+            else: signal -= 20
+            
+            # 3. RSI Extremo (Reversión a la media)
+            if rsi < 30: signal += 40      # Oportunidad de oro (rebote)
+            elif rsi > 75: signal -= 40    # Peligro de caída
+            elif rsi > 50: signal += 10    # Fuerza relativa
+            else: signal -= 10
+            
+            # 4. Amplificador de Volumen
+            if rvol > 3:
+                # Si la señal ya es positiva, el volumen la confirma
+                if signal > 0: signal += 20
+                # Si es negativa, el volumen confirma la caída
+                else: signal -= 20
 
-            # --- VEREDICTO SWING ---
-            verdict = "NEUTRAL"
-            verdict_col = "white"
+            # Limitar a -100 y +100
+            signal_pct = max(-100, min(100, int(signal)))
 
-            # Logica de Trader
-            if rsi > 75:
-                verdict = "⚠️ SOBRECOMPRA"
-                verdict_col = "#ff5555"
-            elif pct_today > 15 and rvol > 2:
-                verdict = "🚀 MOMENTUM" # Se está moviendo AHORA
-                verdict_col = "#ffff00"
-            elif pct_5d > 10 and pct_today < 0 and rsi < 60:
-                verdict = "🛒 DIP BUY" # Tendencia alcista, día rojo (rebote)
-                verdict_col = "#00ffea"
-            elif pct_15d > 30 and current_price > sma50:
-                verdict = "💎 TENDENCIA" # Tren en marcha
-                verdict_col = "#00ff00"
-            elif current_price < sma50 and pct_15d < -10:
-                verdict = "❌ BAJISTA"
-                verdict_col = "#ff0000"
+            # Texto y Color del Asesor
+            adv_text = "MANTENER"
+            adv_col = "white"
+            
+            if signal_pct >= 80:
+                adv_text = "💎 COMPRA FUERTE"
+                adv_col = "#00ffea" # Cyan Neon
+            elif signal_pct >= 30:
+                adv_text = "🟢 COMPRAR"
+                adv_col = "#00ff00" # Verde
+            elif signal_pct <= -80:
+                adv_text = "🆘 VENTA FUERTE"
+                adv_col = "#ff0000" # Rojo Puro
+            elif signal_pct <= -30:
+                adv_text = "🟠 VENDER"
+                adv_col = "#ff8800" # Naranja
+            else:
+                adv_text = "⚪ MANTENER"
+                adv_col = "#cccccc"
 
+            # Targets
+            stop = price - (2 * atr)
+            target = price + (3 * atr)
+            potencial = ((target - price) / price) * 100
+
+            # Variaciones para la tabla
+            pct_1d = ((price - prev) / prev) * 100
+            
             return {
-                "Ticker": ticker, "Price": current_price,
-                "Pct1D": pct_today, "Pct5D": pct_5d, "Pct15D": pct_15d,
-                "RVol": rvol, "DistHigh": dist_high,
-                "Verdict": verdict, "VerdictCol": verdict_col,
-                "Stop": stop_loss, "Target": target, "Potencial": potential
+                "Ticker": ticker, "Price": price, "Score": score,
+                "SignalPct": signal_pct, "AdvText": adv_text, "AdvCol": adv_col,
+                "Pct1D": pct_1d, "RVol": rvol,
+                "Stop": stop, "Target": target, "Potencial": potencial
             }
-        except Exception as e: 
-            print(f"Error {ticker}: {e}")
-            return None
+        except: return None
 
     def render_results(self, results):
         self.is_running = False
-        self.btn_analyze.configure(state="normal", text="⚡ ESCANEAR MERCADO", fg_color="#006400")
+        self.btn_analyze.configure(state="normal", text="⚡ CONSULTAR ASESOR", fg_color="#006400")
         self.lbl_last_update.configure(text=f"Act: {datetime.now().strftime('%H:%M')}")
-        self.lbl_status.configure(text="Listo.")
+        self.lbl_status.configure(text="Análisis completado.")
 
         for w in self.results_area.winfo_children(): w.destroy()
         if not results: return
-        results.sort(key=lambda x: x['Pct1D'], reverse=True) # Ordenar por lo que se mueve HOY
+        
+        # Ordenar por Señal del Asesor (Lo más fuerte arriba)
+        results.sort(key=lambda x: x['SignalPct'], reverse=True)
 
-        # --- CABECERAS CON TOOLTIPS ---
-        # Definición: (Texto Mostrado, Ancho, Texto Tooltip)
         cols = [
-            ("Ticker", 60, "Símbolo de la acción"),
-            ("VEREDICTO", 120, "Opinión del Algoritmo basada en tendencia y momentum."),
-            ("Precio", 70, "Precio actual de mercado."),
-            ("% Hoy", 70, "Variación intradía. ¿Se mueve hoy?"),
-            ("% 5D", 70, "Variación en 1 semana. ¿Tiene consistencia?"),
-            ("% 15D", 70, "Variación en 3 semanas. Tendencia a medio plazo."),
-            ("R.Vol", 60, "Volumen Relativo.\n>1: Más interés de lo normal.\n>3: ¡Explosivo!"),
-            ("Target 🎯", 80, "Objetivo de venta técnica (Techo probable)."),
-            ("Potencial", 70, "% de ganancia hasta el Target."),
-            ("Stop Loss", 80, "Vende aquí si baja para proteger capital.")
+            ("Ticker", 60, "Símbolo"),
+            ("ASESOR 🤖", 160, "Recomendación basada en confluencia técnica.\n+100%: Compra Agresiva\n-100%: Venta Agresiva"),
+            ("Confianza", 70, "% de seguridad en la dirección."),
+            ("Score", 50, "Calidad Técnica (0-100)"),
+            ("Precio", 70, "Precio actual"),
+            ("% Hoy", 60, "Variación diaria"),
+            ("R.Vol", 50, "Volumen Relativo"),
+            ("Target 🎯", 70, "Objetivo"),
+            ("Potencial", 70, "Ganancia esperada"),
+            ("Stop Loss", 70, "Stop de protección")
         ]
 
         h_frame = ctk.CTkFrame(self.results_area, fg_color="#333", height=40)
@@ -283,38 +314,41 @@ class SniperApp(ctk.CTk):
         for text, w, tip in cols:
             lbl = ctk.CTkLabel(h_frame, text=text, width=w, font=ctk.CTkFont(weight="bold"))
             lbl.pack(side="left", padx=2)
-            ToolTip(lbl, tip) # <-- AQUI SE AÑADE LA MAGIA DEL HOVER
+            ToolTip(lbl, tip)
 
-        # --- FILAS ---
         for res in results:
+            # Color de fondo sutil según la señal
             bg = "#222"
-            if "MOMENTUM" in res['Verdict']: bg = "#2d2d00" # Fondo amarillento oscuro
-            elif "DIP BUY" in res['Verdict']: bg = "#002d2d" # Fondo cyan oscuro
+            if res['SignalPct'] >= 80: bg = "#002b2b" # Fondo verdoso muy oscuro
+            elif res['SignalPct'] <= -80: bg = "#2b0000" # Fondo rojizo muy oscuro
 
             row = ctk.CTkFrame(self.results_area, fg_color=bg)
             row.pack(fill="x", pady=2)
 
             self.mk_cell(row, res['Ticker'], 60, True)
             
-            v_lbl = ctk.CTkLabel(row, text=res['Verdict'], width=120, text_color=res['VerdictCol'], font=ctk.CTkFont(weight="bold"))
-            v_lbl.pack(side="left")
+            # Columna ASESOR
+            adv_lbl = ctk.CTkLabel(row, text=res['AdvText'], width=160, text_color=res['AdvCol'], font=ctk.CTkFont(weight="bold"))
+            adv_lbl.pack(side="left", padx=2)
+            
+            # Columna CONFIANZA %
+            conf_text = f"{res['SignalPct']:+d}%"
+            conf_col = res['AdvCol']
+            self.mk_cell(row, conf_text, 70, bold=True, color=conf_col)
+
+            # Score
+            sc_col = "#00ff00" if res['Score'] >= 70 else "white"
+            self.mk_cell(row, str(res['Score']), 50, color=sc_col)
 
             self.mk_cell(row, f"${res['Price']:.2f}", 70)
-
-            # Colores condicionales para porcentajes
-            self.mk_cell(row, f"{res['Pct1D']:+.1f}%", 70, color=self.get_col(res['Pct1D']))
-            self.mk_cell(row, f"{res['Pct5D']:+.1f}%", 70, color=self.get_col(res['Pct5D']))
-            self.mk_cell(row, f"{res['Pct15D']:+.1f}%", 70, color=self.get_col(res['Pct15D']))
+            self.mk_cell(row, f"{res['Pct1D']:+.1f}%", 60, color="#00ff00" if res['Pct1D']>0 else "#ff5555")
             
-            # RVol en morado si es alto (Penny stock action)
             rv_col = "#d000ff" if res['RVol'] > 3 else "white"
-            self.mk_cell(row, f"{res['RVol']:.1f}x", 60, color=rv_col)
+            self.mk_cell(row, f"{res['RVol']:.1f}x", 50, color=rv_col)
 
-            self.mk_cell(row, f"${res['Target']:.2f}", 80, color="#7fff00", bold=True)
+            self.mk_cell(row, f"${res['Target']:.2f}", 70, color="#7fff00")
             self.mk_cell(row, f"+{res['Potencial']:.1f}%", 70, color="#7fff00")
-            self.mk_cell(row, f"${res['Stop']:.2f}", 80, color="#ffaaaa")
-
-    def get_col(self, val): return "#00ff00" if val > 0 else "#ff5555"
+            self.mk_cell(row, f"${res['Stop']:.2f}", 70, color="#ffaaaa")
 
     def mk_cell(self, parent, text, w, bold=False, color="white"):
         f = ctk.CTkFont(weight="bold") if bold else ctk.CTkFont()
