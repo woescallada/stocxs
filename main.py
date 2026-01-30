@@ -1,299 +1,318 @@
 import customtkinter as ctk
 import json
 import os
+import sys
 import threading
+import time
 import yfinance as yf
 import pandas as pd
 import ta
 from tkinter import messagebox
+from datetime import datetime
 
 # --- CONFIGURACIÓN VISUAL ---
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("dark-blue")
 
-FILE_NAME = "mis_acciones.json"
+JSON_FILE = "mis_acciones.json"
+EXCEL_FILE = "stocks.xlsx"
 
 class SniperApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         # Configuración de la ventana
-        self.title("🦈 Sniper Stocks Pro - Desktop")
-        self.geometry("1300x800") # Un poco más grande para que quepan las columnas
+        self.title("🦈 Sniper Stocks PRO (Expert Model + Targets)")
+        self.geometry("1600x850") # Aún más ancho para ver el Target
 
-        # Variables de datos
-        self.tickers = self.load_tickers()
+        # Variables
+        self.is_running = False
+        self.last_update_time = "Nunca"
+        self.auto_refresh_active = True 
         
+        self.tickers = self.load_data_source()
+
         # --- LAYOUT PRINCIPAL ---
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # ==========================================
-        # 1. PANEL IZQUIERDO (LISTA DE VIGILANCIA)
-        # ==========================================
+        # 1. PANEL IZQUIERDO (CONTROL)
         self.left_frame = ctk.CTkFrame(self, width=280, corner_radius=0)
         self.left_frame.grid(row=0, column=0, sticky="nsew")
-        self.left_frame.grid_rowconfigure(4, weight=1)
+        self.left_frame.grid_rowconfigure(5, weight=1)
 
-        # Título
-        self.logo_label = ctk.CTkLabel(self.left_frame, text="📡 CENTER CONTROL", font=ctk.CTkFont(size=20, weight="bold"))
-        self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+        ctk.CTkLabel(self.left_frame, text="🛰️ COMMAND CENTER", font=ctk.CTkFont(size=20, weight="bold")).grid(row=0, column=0, padx=20, pady=(20, 10))
+        
+        self.lbl_source = ctk.CTkLabel(self.left_frame, text="Fuente: Cargando...", text_color="gray")
+        self.lbl_source.grid(row=1, column=0, padx=20, pady=(0, 20))
 
-        # Input añadir (Soporta listas)
-        self.lbl_add = ctk.CTkLabel(self.left_frame, text="Añadir Tickers (separados por coma):", anchor="w")
-        self.lbl_add.grid(row=1, column=0, padx=20, pady=(10,0), sticky="w")
+        self.input_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
+        self.input_frame.grid(row=2, column=0, padx=20, pady=5, sticky="ew")
         
-        self.entry_ticker = ctk.CTkEntry(self.left_frame, placeholder_text="Ej: TSLA, AAPL, AMC")
-        self.entry_ticker.grid(row=2, column=0, padx=20, pady=5, sticky="ew")
-        
-        # Botones de Gestión
-        self.btn_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
-        self.btn_frame.grid(row=3, column=0, padx=20, pady=5, sticky="ew")
-        
-        self.btn_add = ctk.CTkButton(self.btn_frame, text="➕ Añadir", width=100, command=self.add_tickers)
-        self.btn_add.pack(side="left", padx=(0, 5))
-        
-        self.btn_clear = ctk.CTkButton(self.btn_frame, text="🗑️ Todo", width=80, fg_color="#cf3434", hover_color="#8a2323", command=self.clear_all_tickers)
-        self.btn_clear.pack(side="right")
+        self.entry_ticker = ctk.CTkEntry(self.input_frame, placeholder_text="Añadir: AAPL, TSLA")
+        self.entry_ticker.pack(side="left", fill="x", expand=True, padx=(0,5))
+        self.btn_add = ctk.CTkButton(self.input_frame, text="+", width=40, command=self.add_manual_ticker)
+        self.btn_add.pack(side="right")
 
-        # Lista Scrollable
-        self.lbl_lista = ctk.CTkLabel(self.left_frame, text=f"📋 Mis Stocks ({len(self.tickers)})", anchor="w", font=ctk.CTkFont(weight="bold"))
-        self.lbl_lista.grid(row=4, column=0, padx=20, pady=(20,5), sticky="w")
+        self.switch_auto = ctk.CTkSwitch(self.left_frame, text="Auto-Refresh (30m)", command=self.toggle_auto_refresh)
+        self.switch_auto.select()
+        self.switch_auto.grid(row=3, column=0, padx=20, pady=20)
 
-        self.scroll_tickers = ctk.CTkScrollableFrame(self.left_frame, label_text="Lista de Vigilancia")
+        self.lbl_count = ctk.CTkLabel(self.left_frame, text=f"Stocks: {len(self.tickers)}", anchor="w", font=ctk.CTkFont(weight="bold"))
+        self.lbl_count.grid(row=4, column=0, padx=20, pady=5, sticky="w")
+
+        self.scroll_tickers = ctk.CTkScrollableFrame(self.left_frame)
         self.scroll_tickers.grid(row=5, column=0, padx=20, pady=5, sticky="nsew")
-        
-        # Botón Analizar
-        self.btn_analyze = ctk.CTkButton(self.left_frame, text="⚡ EJECUTAR ANÁLISIS", height=50, 
+
+        self.btn_analyze = ctk.CTkButton(self.left_frame, text="⚡ ESCANEAR AHORA", height=50, 
                                          font=ctk.CTkFont(size=16, weight="bold"), 
-                                         fg_color="#006400", hover_color="#004d00", # Verde oscuro
-                                         command=self.start_analysis)
+                                         fg_color="#006400", hover_color="#004d00",
+                                         command=self.manual_scan)
         self.btn_analyze.grid(row=6, column=0, padx=20, pady=20, sticky="ew")
 
-        # ==========================================
         # 2. PANEL DERECHO (RESULTADOS)
-        # ==========================================
         self.right_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.right_frame.grid(row=0, column=1, sticky="nsew")
 
-        # Cabecera Derecha
-        self.top_bar = ctk.CTkFrame(self.right_frame, fg_color="transparent")
-        self.top_bar.pack(fill="x", padx=20, pady=20)
-        
-        self.lbl_res = ctk.CTkLabel(self.top_bar, text="Resultados del Análisis", font=ctk.CTkFont(size=24, weight="bold"))
-        self.lbl_res.pack(side="left")
+        self.top_bar = ctk.CTkFrame(self.right_frame, fg_color="#222", height=50)
+        self.top_bar.pack(fill="x")
+        self.lbl_status = ctk.CTkLabel(self.top_bar, text="Estado: Esperando...", font=ctk.CTkFont(size=14))
+        self.lbl_status.pack(side="left", padx=20, pady=10)
+        self.lbl_last_update = ctk.CTkLabel(self.top_bar, text="", text_color="#aaaaaa")
+        self.lbl_last_update.pack(side="right", padx=20)
 
-        # Área de Resultados (Scrollable)
         self.results_area = ctk.CTkScrollableFrame(self.right_frame)
-        self.results_area.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        self.results_area.pack(fill="both", expand=True, padx=20, pady=20)
 
-        # Cargar lista inicial
-        self.refresh_ticker_list()
+        self.refresh_ticker_list_ui()
+        self.update_source_label()
+        self.start_auto_timer()
 
-    # --- GESTIÓN DE DATOS ---
-    def load_tickers(self):
-        if os.path.exists(FILE_NAME):
-            with open(FILE_NAME, "r") as f:
+    # --- LÓGICA DE DATOS ---
+    def load_data_source(self):
+        if os.path.exists(EXCEL_FILE):
+            try:
+                df = pd.read_excel(EXCEL_FILE)
+                raw_list = df.iloc[:, 0].dropna().astype(str).tolist()
+                clean_list = [x.strip().upper() for x in raw_list if x.strip()]
+                self.using_excel = True
+                return list(set(clean_list))
+            except Exception as e:
+                messagebox.showerror("Error Excel", f"Error leyendo Excel:\n{e}")
+        
+        self.using_excel = False
+        if os.path.exists(JSON_FILE):
+            with open(JSON_FILE, "r") as f:
                 return json.load(f)
         return []
 
-    def save_tickers(self):
-        with open(FILE_NAME, "w") as f:
-            json.dump(self.tickers, f)
-        self.lbl_lista.configure(text=f"📋 Mis Stocks ({len(self.tickers)})")
+    def update_source_label(self):
+        if self.using_excel:
+            self.lbl_source.configure(text=f"📂 Excel: {EXCEL_FILE}", text_color="#4deeea")
+            self.entry_ticker.configure(state="disabled", placeholder_text="Usa el Excel")
+            self.btn_add.configure(state="disabled")
+        else:
+            self.lbl_source.configure(text="📝 Manual (JSON)", text_color="#ffb84d")
 
-    def add_tickers(self):
-        raw_text = self.entry_ticker.get()
-        if not raw_text: return
-        
-        # Separar por comas o espacios
-        new_items = [t.strip().upper() for t in raw_text.replace(',', ' ').split() if t.strip()]
-        
-        added_count = 0
-        for item in new_items:
-            if item not in self.tickers:
-                self.tickers.append(item)
-                added_count += 1
-        
-        if added_count > 0:
-            self.save_tickers()
-            self.refresh_ticker_list()
-            self.entry_ticker.delete(0, "end")
+    def save_json(self):
+        if not self.using_excel:
+            with open(JSON_FILE, "w") as f:
+                json.dump(self.tickers, f)
 
-    def delete_single_ticker(self, ticker_to_del):
-        if ticker_to_del in self.tickers:
-            self.tickers.remove(ticker_to_del)
-            self.save_tickers()
-            self.refresh_ticker_list()
+    def add_manual_ticker(self):
+        if self.using_excel: return
+        txt = self.entry_ticker.get().upper().replace(',', ' ')
+        new = [x.strip() for x in txt.split() if x.strip()]
+        for n in new:
+            if n not in self.tickers: self.tickers.append(n)
+        self.save_json()
+        self.entry_ticker.delete(0, 'end')
+        self.refresh_ticker_list_ui()
 
-    def clear_all_tickers(self):
-        if not self.tickers: return
-        self.tickers = []
-        self.save_tickers()
-        self.refresh_ticker_list()
+    def remove_ticker(self, ticker):
+        if self.using_excel: return
+        if ticker in self.tickers:
+            self.tickers.remove(ticker)
+            self.save_json()
+            self.refresh_ticker_list_ui()
 
-    # --- INTERFAZ DINÁMICA (LISTA IZQUIERDA) ---
-    def refresh_ticker_list(self):
-        for widget in self.scroll_tickers.winfo_children():
-            widget.destroy()
-
-        for ticker in self.tickers:
+    def refresh_ticker_list_ui(self):
+        self.lbl_count.configure(text=f"Stocks: {len(self.tickers)}")
+        for w in self.scroll_tickers.winfo_children(): w.destroy()
+        for t in self.tickers:
             row = ctk.CTkFrame(self.scroll_tickers, fg_color="transparent")
-            row.pack(fill="x", pady=2)
-            
-            # Etiqueta Ticker
-            lbl = ctk.CTkLabel(row, text=f"🔹 {ticker}", font=ctk.CTkFont(weight="bold"))
-            lbl.pack(side="left", padx=5)
-            
-            # Botón Borrar Individual (X roja)
-            btn = ctk.CTkButton(row, text="❌", width=30, height=20, 
-                                fg_color="transparent", text_color="#ff5555", hover_color="#330000",
-                                font=ctk.CTkFont(weight="bold"),
-                                command=lambda t=ticker: self.delete_single_ticker(t))
-            btn.pack(side="right")
+            row.pack(fill="x", pady=1)
+            ctk.CTkLabel(row, text=t, width=60, anchor="w").pack(side="left")
+            if not self.using_excel:
+                ctk.CTkButton(row, text="x", width=20, fg_color="transparent", text_color="red", command=lambda x=t: self.remove_ticker(x)).pack(side="right")
 
-    # --- LÓGICA DE ANÁLISIS ---
-    def start_analysis(self):
+    def toggle_auto_refresh(self):
+        self.auto_refresh_active = bool(self.switch_auto.get())
+
+    def start_auto_timer(self):
+        if self.auto_refresh_active and not self.is_running: self.manual_scan()
+        self.after(1800000, self.start_auto_timer) 
+
+    # --- MOTOR DE ANÁLISIS ---
+    def manual_scan(self):
+        if self.is_running: return
+        if self.using_excel:
+            self.tickers = self.load_data_source()
+            self.refresh_ticker_list_ui()
         if not self.tickers:
-            messagebox.showwarning("Vacío", "Añade acciones a la lista primero.")
+            messagebox.showwarning("Vacío", "No hay acciones.")
             return
-        
-        self.btn_analyze.configure(state="disabled", text="⏳ Analizando...", fg_color="#555")
-        
-        # Limpiar tabla previa
-        for widget in self.results_area.winfo_children():
-            widget.destroy()
-            
-        threading.Thread(target=self.run_logic, daemon=True).start()
 
-    def run_logic(self):
+        self.is_running = True
+        self.btn_analyze.configure(state="disabled", text="⏳ ESCANEANDO...", fg_color="#555")
+        self.lbl_status.configure(text="Analizando mercado...", text_color="yellow")
+        threading.Thread(target=self.run_analysis_thread, daemon=True).start()
+
+    def run_analysis_thread(self):
         results = []
         total = len(self.tickers)
         for i, ticker in enumerate(self.tickers):
-            # Actualizar botón con progreso
-            self.btn_analyze.configure(text=f"⏳ Analizando ({i+1}/{total})...")
-            data = self.get_guru_data(ticker)
-            if data:
-                results.append(data)
-        
-        self.after(0, lambda: self.show_results(results))
+            self.lbl_status.configure(text=f"Analizando {i+1}/{total}: {ticker}")
+            data = self.analyze_expert_mode(ticker)
+            if data: results.append(data)
+        self.after(0, lambda: self.render_results(results))
 
-    def show_results(self, results):
-        self.btn_analyze.configure(state="normal", text="⚡ EJECUTAR ANÁLISIS", fg_color="#006400")
-        
-        if not results:
-            ctk.CTkLabel(self.results_area, text="❌ No se obtuvieron datos. Revisa tu conexión.").pack(pady=20)
-            return
-
-        results.sort(key=lambda x: x['Score'], reverse=True)
-
-        # --- CABECERA DE LA TABLA ---
-        headers_frame = ctk.CTkFrame(self.results_area, height=40, fg_color="#333")
-        headers_frame.pack(fill="x", pady=(0, 5))
-        
-        cols = [("Ticker", 60), ("Score", 50), ("Precio", 70), ("Stop Loss", 70), 
-                ("Riesgo", 60), ("Float", 70), ("RVOL", 50), ("RSI", 50), ("Cierre %", 60)]
-        
-        for col_name, width in cols:
-            ctk.CTkLabel(headers_frame, text=col_name, width=width, font=ctk.CTkFont(weight="bold")).pack(side="left", expand=True, padx=2)
-
-        # --- FILAS DE DATOS ---
-        for res in results:
-            # 1. Color de FONDO según Score
-            bg_color = "#2b2b2b" # Gris base
-            if res['Score'] >= 80: bg_color = "#1e4d2b" # Verde Fuerte (Top)
-            elif res['Score'] >= 60: bg_color = "#5c5c00" # Amarillo oscuro (Medio)
-            
-            row = ctk.CTkFrame(self.results_area, fg_color=bg_color)
-            row.pack(fill="x", pady=2)
-            
-            # 2. Colores de TEXTO específicos (Indicadores)
-            color_float = "#ff00ff" if res['is_low_float'] else "white" # Magenta si es Low Float
-            color_rvol = "#00ffff" if res['is_high_rvol'] else "white" # Cian si hay volumen
-            
-            # Crear celdas
-            self.create_cell(row, res['Ticker'], width=60, bold=True)
-            self.create_cell(row, str(res['Score']), width=50, bold=True)
-            self.create_cell(row, f"${res['Precio']:.2f}", width=70)
-            self.create_cell(row, f"${res['Stop Loss']:.2f}", width=70, color="#ff9999") # Rojo claro
-            self.create_cell(row, f"{res['Riesgo %']:.1f}%", width=60)
-            self.create_cell(row, f"{res['Float']:.1f}M", width=70, color=color_float, bold=True)
-            self.create_cell(row, f"{res['RVOL']:.1f}x", width=50, color=color_rvol, bold=True)
-            self.create_cell(row, f"{res['RSI']:.0f}", width=50)
-            self.create_cell(row, f"{res['Cierre %']:.0f}%", width=60)
-
-    def create_cell(self, parent, text, width, color="white", bold=False):
-        font = ctk.CTkFont(weight="bold") if bold else ctk.CTkFont()
-        lbl = ctk.CTkLabel(parent, text=text, width=width, text_color=color, font=font)
-        lbl.pack(side="left", expand=True, padx=2)
-
-    def get_guru_data(self, ticker):
+    def analyze_expert_mode(self, ticker):
         try:
             t = yf.Ticker(ticker)
-            # Intentar obtener precio rápido
             try: price = t.fast_info['last_price']
             except: 
                 h = t.history(period='1d')
                 if h.empty: return None
                 price = h['Close'].iloc[-1]
-            
-            info = t.info
-            df = t.history(period="6mo")
+
+            df = t.history(period="1y") 
             if len(df) < 50: return None
             
-            # Datos fundamentales y técnicos
-            f_shares = info.get('floatShares', None)
-            m_cap = info.get('marketCap', 0)
-            if f_shares is None and price > 0: f_shares = m_cap / price 
-            
+            sma50 = df['Close'].rolling(50).mean().iloc[-1]
+            sma200 = df['Close'].rolling(200).mean().iloc[-1] if len(df) >= 200 else 0
+            rsi = ta.momentum.rsi(df['Close'], window=14).iloc[-1]
+            macd = ta.trend.MACD(df['Close'])
+            macd_line = macd.macd().iloc[-1]
+            macd_signal = macd.macd_signal().iloc[-1]
+            atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14).iloc[-1]
             vol = df['Volume'].iloc[-1]
             avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
+            rvol = vol / avg_vol if avg_vol > 0 else 0
+
+            # --- CÁLCULO DE TECHOS Y SUELOS (TARGETS) ---
+            # Stop Loss (Suelo) = Precio - 2x Volatilidad
+            stop_loss = price - (2.0 * atr)
             
-            sma20 = df['Close'].rolling(20).mean().iloc[-1]
-            sma50 = df['Close'].rolling(50).mean().iloc[-1]
-            sma200 = df['Close'].rolling(200).mean().iloc[-1] if len(df) > 200 else 0
-            atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14).iloc[-1]
-            rsi = ta.momentum.rsi(df['Close'], window=14).iloc[-1]
+            # Target (Techo) = Precio + 2.5x Volatilidad (Ratio Beneficio/Riesgo > 1)
+            take_profit = price + (2.5 * atr)
             
-            # Cierre relativo
-            day_range = df['High'].iloc[-1] - df['Low'].iloc[-1]
-            close_pos = (df['Close'].iloc[-1] - df['Low'].iloc[-1]) / day_range if day_range > 0 else 0
+            potential_gain = ((take_profit - price) / price) * 100
             
-            # --- SCORING ---
+            # --- SCORE & LOGICA ---
             score = 0
-            is_low_float = False
-            is_high_rvol = False
-            
-            # Float
-            if f_shares and f_shares < 10e6: 
-                score += 25
-                is_low_float = True
-            elif f_shares and f_shares < 20e6: score += 15
-            
-            # Volume
-            if f_shares and vol > f_shares: score += 25
-            rvol = vol/avg_vol if avg_vol else 0
-            if rvol > 5: 
+            trend_state = "Neutral"
+            if price > sma50:
                 score += 20
-                is_high_rvol = True
-            elif rvol > 3: score += 10
+                if sma50 > sma200 and sma200 > 0:
+                    score += 15
+                    trend_state = "ALCISTA"
+                else: trend_state = "RECUPERANDO"
+            elif price < sma50:
+                trend_state = "BAJISTA"
+                score -= 10
             
-            # Tendencia
-            if price > sma20 and price > sma50: score += 10
-            if price > sma200: score += 5
-            if close_pos > 0.75: score += 15
+            if macd_line > macd_signal: score += 15
+            else: score -= 5
             
-            stop_loss = max(price - (2.5 * atr), 0.01)
-            risk = ((price - stop_loss) / price) * 100
+            if 40 <= rsi <= 60: score += 10
+            elif rsi < 30: score += 5
+            elif rsi > 70: score -= 15
             
+            if rvol > 3: score += 15
+
+            # --- VEREDICTO FINAL ---
+            verdict = "NEUTRAL"
+            verdict_color = "white"
+
+            if rsi > 75:
+                verdict = "⚠️ TECHO (RSI)"
+                verdict_color = "#ff5555"
+            elif trend_state == "BAJISTA" and macd_line < macd_signal:
+                verdict = "❌ EVITAR"
+                verdict_color = "#ff0000"
+            else:
+                if score >= 75 and trend_state == "ALCISTA":
+                    verdict = "💎 GOLD"
+                    verdict_color = "#00ffea"
+                elif rvol > 3 and macd_line > macd_signal:
+                    verdict = "🚀 EXPLOSIVA"
+                    verdict_color = "#ffff00"
+                elif trend_state == "RECUPERANDO" and macd_line > macd_signal:
+                    verdict = "🔄 CAMBIO CICLO"
+                    verdict_color = "#ff00ff"
+                elif score < 40:
+                    verdict = "💩 BASURA"
+                    verdict_color = "#888888"
+
             return {
-                "Ticker": ticker, "Precio": price, "Score": score,
-                "Float": (f_shares/1e6) if f_shares else 0, 
-                "RVOL": rvol, "RSI": rsi, "Cierre %": close_pos*100,
-                "Stop Loss": stop_loss, "Riesgo %": risk,
-                "is_low_float": is_low_float, "is_high_rvol": is_high_rvol
+                "Ticker": ticker, "Precio": price, "Score": int(score),
+                "Trend": trend_state, "RSI": rsi, "Verdict": verdict, "VerdictColor": verdict_color,
+                "Stop": stop_loss, "Target": take_profit, "Potencial": potential_gain
             }
-        except: return None
+
+        except Exception as e: return None
+
+    def render_results(self, results):
+        self.is_running = False
+        self.btn_analyze.configure(state="normal", text="⚡ ESCANEAR AHORA", fg_color="#006400")
+        self.last_update_time = datetime.now().strftime("%H:%M")
+        self.lbl_last_update.configure(text=f"Última act: {self.last_update_time}")
+        self.lbl_status.configure(text="Listo.", text_color="white")
+
+        for w in self.results_area.winfo_children(): w.destroy()
+
+        if not results: return
+        results.sort(key=lambda x: x['Score'], reverse=True)
+
+        # CABECERAS
+        # Añadimos Target y Potencial
+        headers = ["Ticker", "VEREDICTO", "Score", "Precio", "Target 🎯", "Potencial", "Stop Loss"]
+        h_frame = ctk.CTkFrame(self.results_area, fg_color="#333", height=40)
+        h_frame.pack(fill="x", pady=(0, 5))
+        
+        widths = [60, 140, 50, 80, 80, 70, 80]
+        for i, h in enumerate(headers):
+            ctk.CTkLabel(h_frame, text=h, width=widths[i], font=ctk.CTkFont(weight="bold")).pack(side="left", padx=2)
+
+        # FILAS
+        for res in results:
+            bg = "#222"
+            if "GOLD" in res['Verdict']: bg = "#0f3d3d"
+            
+            row = ctk.CTkFrame(self.results_area, fg_color=bg)
+            row.pack(fill="x", pady=2)
+            
+            self.mk_cell(row, res['Ticker'], 60, True)
+            
+            verdict_lbl = ctk.CTkLabel(row, text=res['Verdict'], width=140, text_color=res['VerdictColor'], font=ctk.CTkFont(weight="bold", size=13))
+            verdict_lbl.pack(side="left", padx=2)
+            
+            self.mk_cell(row, str(res['Score']), 50)
+            self.mk_cell(row, f"${res['Precio']:.2f}", 80)
+            
+            # Target (Verde Neon)
+            self.mk_cell(row, f"${res['Target']:.2f}", 80, color="#7fff00", bold=True)
+            
+            # Potencial %
+            self.mk_cell(row, f"+{res['Potencial']:.1f}%", 70, color="#7fff00")
+            
+            # Stop Loss (Rojo Claro)
+            self.mk_cell(row, f"${res['Stop']:.2f}", 80, color="#ffaaaa")
+
+    def mk_cell(self, parent, text, w, bold=False, color="white"):
+        f = ctk.CTkFont(weight="bold") if bold else ctk.CTkFont()
+        ctk.CTkLabel(parent, text=text, width=w, text_color=color, font=f).pack(side="left", padx=2)
 
 if __name__ == "__main__":
     app = SniperApp()
