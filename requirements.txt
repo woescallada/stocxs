@@ -2,4 +2,5 @@ customtkinter
 yfinance
 pandas
 ta
+openpyxl
 pyinstaller
